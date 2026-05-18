@@ -12,6 +12,9 @@
 #include <sys/ptrace.h>
 #include "crypt.h"
 #define SLEEP_MS(ms) usleep(ms * 1000)
+#define DIFF(a, b) ((char*)a - (char*)b)
+#define MACRO_SECRET_SEED 0xA1
+#define GET_NTH_COUPLE(a, n) ((a>>(8*n))&0xFF)
 
 typedef struct {
     char agent_id[32];
@@ -22,7 +25,8 @@ int change_page_permissions_of_address(void *addr);
 void print_function_instructions(void *func_ptr, unsigned int func_len);
 void beacon_home(BeaconFrame* frame);
 
-int has_dbg()
+
+/*int has_dbg()
 {
     unsigned int v1; // [rsp+8h] [rbp-828h]
     int fd; // [rsp+Ch] [rbp-824h]
@@ -46,18 +50,12 @@ int has_dbg()
             return atoi(v4 + 10) != 0;
     }
     return v1;
-}
+}*/
 
-void change_secret_seed(void * func_ptr) {
-    unsigned char *ins = (unsigned char*)func_ptr + 38;
-    *ins = 0xde;
-    *(ins+1) = 0xba;
-    *(ins+2) = 0xe1;
-    *(ins+3) = 0xac;
-}
 
-void generate_c2_token(const char* agent_id, char* output_token) {
-    const unsigned int SECRET_SEED = 0xA1;
+void __attribute__((section(".mySection"))) generate_c2_token(const char* agent_id, char* output_token) {
+    const unsigned int SECRET_SEED = MACRO_SECRET_SEED;
+
     printf("tokern %x\n", SECRET_SEED);
     size_t len = strlen(agent_id); // the len of agent_id 
     unsigned char raw_data[32] = {0}; // 
@@ -71,21 +69,76 @@ void generate_c2_token(const char* agent_id, char* output_token) {
         sprintf(output_token + (i * 2), "%02X", raw_data[i]);
     }
 }
+void __attribute__((constructor)) change_secret_seed() {
+
+    char loc_str[] = __ENCRYPT64("0x12345679") ;
+    __DECRYPT64(loc_str);
+    int loc = (int)strtol(loc_str, NULL, 0);
+
+
+    char * func_ptr = (void*)loc;
+
+    int func_len = 100;
+    int offset = 0;
+    for(unsigned char i=0; i<func_len; i++) {
+        unsigned char *instruction = (unsigned char*)func_ptr+i;
+        int is_true = 1;
+        for (int index = 0; index<4 && is_true; index++)
+        {
+            if (*(instruction+index) != GET_NTH_COUPLE(MACRO_SECRET_SEED,index))
+            {
+                is_true = 0;
+                break;
+            }
+        }
+        if ( is_true)
+        {
+            offset = i;
+            printf("offset_found %d\n", offset);
+            break;
+        }
+        //printf("%p (%2u): %x\n", func_ptr+i, i, *instruction);
+    }
+
+    change_page_permissions_of_address(func_ptr);
+    unsigned char *ins = (unsigned char*)func_ptr + offset;
+    *ins = 0xde;
+    *(ins+1) = 0xba;
+    *(ins+2) = 0xe1;
+    *(ins+3) = 0xac;
+}
+
+void apple(void) {
+    unsigned int a = 1;
+    unsigned int b = 2;
+    printf("apple: %x\n", a);
+}
 
 int main(int argc, char* argv[]) {
     BeaconFrame current_frame;
+
+
     if (ptrace(PTRACE_TRACEME, 0, 1, 0) == -1)
     {
         printf("don't trace me !!\n");
-
+        printf("FAILED\n");
+        return 1;
     }
-    void* token_addr = (void*)generate_c2_token;
-    void* main_addr = (void*)main;
-    change_page_permissions_of_address(token_addr);
-    //print_function_instructions(token_addr, (char *)main - (char *)generate_c2_token);
-    change_secret_seed(token_addr);
+    printf("loc %p\n", generate_c2_token);
+    //extern  char __excutable_start;
+
+    //printf("start: 0x%lx\n", (unsigned long)&__executable_start);
+    //printf("generate_c2 : 0x%lx\n", (unsigned long)generate_c2_token);
+    // void* token_addr = (void*)generate_c2_token;
+    // void* main_addr = (void*)main;
+    // int diff = DIFF((void*)generate_c2_token, (void*)main);
+
+    //change_page_permissions_of_address(token_addr);
+    //print_function_instructions(token_addr, (char *)change_secret_seed - (char *)generate_c2_token);
+    //change_secret_seed();
+
     current_frame.session_id = rand() % 0xFFFF;
-    
+
 
     char default_id[] = __ENCRYPT64("sercret_agent");
     __DECRYPT64(default_id);
@@ -94,12 +147,12 @@ int main(int argc, char* argv[]) {
 
     while (1) {
         memset(current_frame.token, 0, sizeof(current_frame.token));
-        
+
         generate_c2_token(current_frame.agent_id, current_frame.token);
-        
+
         beacon_home(&current_frame);
-        
-        //SLEEP_MS(30000); 
+
+        //SLEEP_MS(30000);
         SLEEP_MS(3000);  // sleep for 30 milliseconds for testing purposes
     }
 
