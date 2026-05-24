@@ -6,3 +6,6 @@
 #define SLOVOS_CYBER_CHALLENGE_ANTI_DEBUG_H
 
 #endif // SLOVOS_CYBER_CHALLENGE_ANTI_DEBUG_H
+
+int simple_ptrace_check_debugger();
+int is_tracer_pid();

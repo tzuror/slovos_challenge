@@ -3,14 +3,15 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
-#include <sys/stat.h>
 #include <crypt.h>
 #include <sys/mman.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/types.h>
 #include <sys/ptrace.h>
 #include "crypt.h"
+#include "anti_debug.c"
+#include "agent_encrypt_code.c"
+#include "anti_debug.h"
+
+
 #define SLEEP_MS(ms) usleep(ms * 1000)
 #define DIFF(a, b) ((char*)a - (char*)b)
 #define MACRO_SECRET_SEED 0xA1
@@ -24,33 +25,14 @@ typedef struct {
 int change_page_permissions_of_address(void *addr);
 void print_function_instructions(void *func_ptr, unsigned int func_len);
 void beacon_home(BeaconFrame* frame);
+void check_debugger(void);
+int hidden_ptrace(void);
+void decrypt_function(void *func_ptr);
+extern int __mySectionStart;
+extern int __mySectionEnd;
 
 
-/*int has_dbg()
-{
-    unsigned int v1; // [rsp+8h] [rbp-828h]
-    int fd; // [rsp+Ch] [rbp-824h]
-    ssize_t v3; // [rsp+10h] [rbp-820h]
-    char *v4; // [rsp+18h] [rbp-818h]
-    char buf[2056]; // [rsp+20h] [rbp-810h] BYREF
-    //unsigned __int64 v6; // [rsp+828h] [rbp-8h]
 
-    //v6 = __readfsqword(0x28u);
-    v1 = 0;
-    fd = open("/proc/self/status", 0);
-    if ( fd == -1 )
-        return 0;
-    v3 = read(fd, buf, 0x800u);
-    close(fd);
-    if ( v3 > 0 )
-    {
-        buf[v3] = 0;
-        v4 = strstr(buf, "TracerPid:");
-        if ( v4 )
-            return atoi(v4 + 10) != 0;
-    }
-    return v1;
-}*/
 
 
 void __attribute__((section(".mySection"))) generate_c2_token(const char* agent_id, char* output_token) {
@@ -69,38 +51,97 @@ void __attribute__((section(".mySection"))) generate_c2_token(const char* agent_
         sprintf(output_token + (i * 2), "%02X", raw_data[i]);
     }
 }
+
+void __attribute__((section(".mySection2"))) place_holder(void) {
+    //place holder
+    return;
+}
+void __attribute__((constructor)) start()
+{
+    check_debugger();//check if being debugged before doing anything
+
+
+    void* placehold_func  = place_holder;
+    char  offset_str[] = __ENCRYPT64("0x1000");
+    __DECRYPT64(offset_str);
+    int offset1 = (int)strtol(offset_str, NULL, 0);
+    char * secret_func_ptr  = placehold_func + offset1;
+    change_page_permissions_of_address(secret_func_ptr);
+
+    decrypt_function(secret_func_ptr);
+
+}
+
+
+
+void decrypt_function(void *func_ptr) {
+    char * func_ptr_char = (char*)func_ptr;
+    //size_t exact_len = (size_t)&__mySectionEnd - (size_t)&__mySectionStart;
+    size_t exact_len = (size_t)&__mySectionEnd - (size_t)func_ptr;
+    //printf("exact_len %x\n", exact_len);
+    for ( int i = 0; i < exact_len; i++)
+    {
+        char current_byte = func_ptr_char[i];
+        char decrypted_byte = decrypt_byte(i, func_ptr_char[i], 0x1337);
+        func_ptr_char[i] = decrypted_byte;
+        //printf("changed %x to %x\n", current_byte, decrypted_byte);
+    }
+}
+void check_debugger(void)
+{
+
+    int hidden = hidden_ptrace();
+    //int simple_patrace = simple_ptrace_check_debugger();
+    int sum = hidden;
+    if (sum)
+    {
+        printf("FAILED\n");
+        exit(1);
+    }
+    //int hiden_ptrace = hidden_ptrace();
+}
+
+
 void __attribute__((constructor)) change_secret_seed() {
+    void* placehold_func  = place_holder;
+    char  offset_str[] = __ENCRYPT64("0x1000");
+    __DECRYPT64(offset_str);
+    int offset1 = (int)strtol(offset_str, NULL, 0);
+    char * func_ptr  = placehold_func + offset1;
+    change_page_permissions_of_address(func_ptr);
+    //printf("loc %p\n", &func_ptr);
+    //decrypt_function(func_ptr);
 
-    char loc_str[] = __ENCRYPT64("0x12345679") ;
-    __DECRYPT64(loc_str);
-    int loc = (int)strtol(loc_str, NULL, 0);
-
-
-    char * func_ptr = (void*)loc;
 
     int func_len = 100;
     int offset = 0;
-    for(unsigned char i=0; i<func_len; i++) {
-        unsigned char *instruction = (unsigned char*)func_ptr+i;
-        int is_true = 1;
-        for (int index = 0; index<4 && is_true; index++)
+    unsigned char i = 0;
+    forloop:
+    //for(unsigned char i=0; i<func_len; i++) {
+    unsigned char *instruction = (unsigned char*)func_ptr+i;
+    int is_true = 1;
+    for (int index = 0; index<4 && is_true; index++)
+    {
+        if (*(instruction+index) != GET_NTH_COUPLE(MACRO_SECRET_SEED,index))
         {
-            if (*(instruction+index) != GET_NTH_COUPLE(MACRO_SECRET_SEED,index))
-            {
-                is_true = 0;
-                break;
-            }
-        }
-        if ( is_true)
-        {
-            offset = i;
-            printf("offset_found %d\n", offset);
+            //printf("%x\n", *(instruction+index));
+            is_true = 0;
             break;
         }
-        //printf("%p (%2u): %x\n", func_ptr+i, i, *instruction);
     }
+    if ( is_true)
+    {
+        offset = i;
+        printf("offset_found %d\n", offset);
+        goto endloop;
+    }
+    i++;
+    if (i>=func_len) {
 
-    change_page_permissions_of_address(func_ptr);
+        goto endloop;
+    }
+    goto forloop;
+    endloop:
     unsigned char *ins = (unsigned char*)func_ptr + offset;
     *ins = 0xde;
     *(ins+1) = 0xba;
@@ -108,38 +149,12 @@ void __attribute__((constructor)) change_secret_seed() {
     *(ins+3) = 0xac;
 }
 
-void apple(void) {
-    unsigned int a = 1;
-    unsigned int b = 2;
-    printf("apple: %x\n", a);
-}
+
 
 int main(int argc, char* argv[]) {
     BeaconFrame current_frame;
 
-
-    if (ptrace(PTRACE_TRACEME, 0, 1, 0) == -1)
-    {
-        printf("don't trace me !!\n");
-        printf("FAILED\n");
-        return 1;
-    }
-    printf("loc %p\n", generate_c2_token);
-    //extern  char __excutable_start;
-
-    //printf("start: 0x%lx\n", (unsigned long)&__executable_start);
-    //printf("generate_c2 : 0x%lx\n", (unsigned long)generate_c2_token);
-    // void* token_addr = (void*)generate_c2_token;
-    // void* main_addr = (void*)main;
-    // int diff = DIFF((void*)generate_c2_token, (void*)main);
-
-    //change_page_permissions_of_address(token_addr);
-    //print_function_instructions(token_addr, (char *)change_secret_seed - (char *)generate_c2_token);
-    //change_secret_seed();
-
     current_frame.session_id = rand() % 0xFFFF;
-
-
     char default_id[] = __ENCRYPT64("sercret_agent");
     __DECRYPT64(default_id);
 
@@ -169,6 +184,7 @@ int change_page_permissions_of_address(void *addr) {
 
     return 0;
 }
+
 
 void beacon_home(BeaconFrame* frame) {
 	// This function sends the beacon, but it is not implemented in this case
