@@ -16,6 +16,7 @@
 #include  "crypt.h"
 
 
+    /*
 int simple_ptrace_check_debugger()
 {
     if (ptrace(PTRACE_TRACEME, 0, 1, 0) == -1)
@@ -39,14 +40,14 @@ int check_tracer_pid()
     int tracer_pid = 0;
 
 }
+*/
 
 int is_tracer_pid()
 {
     FILE *fp = fopen("/proc/self/status", "r");
     if (fp == NULL) {
-        return -1; // Error opening the file
+        return -1;
     }
-
     char line[256];
     int tracer_pid = 0;
 
@@ -58,11 +59,11 @@ int is_tracer_pid()
             }
         }
     }
-
     fclose(fp);
     return tracer_pid;
 }
 
+/*
 int GetParentProcessName(char *buffer, size_t buffer_size) {
     FILE *fp;
     char path[64];
@@ -92,7 +93,7 @@ int find_breakpoint(void* start, void* end) {
         ptr++;
     }
     return 0;
-}
+}*/
 
 
 
@@ -102,7 +103,6 @@ int hidden_ptrace()
     long (*go)(enum __ptrace_request request, pid_t pid, void *addr, void *data);
     handle = dlopen ("libc.so.6", RTLD_NOW);
     if (!handle) {
-        fprintf(stderr, "Error opening library: %s\n", dlerror());
         return -1;
     }
     char ptrace_str[] = __ENCRYPT64("ptrace");
@@ -110,7 +110,6 @@ int hidden_ptrace()
     go = dlsym(handle, ptrace_str);
     if (go(PTRACE_TRACEME, 0, NULL, NULL) < 0)
     {
-        printf("being traced, hidden ptrace\n");
         return 1;
     }
     dlclose(handle);
