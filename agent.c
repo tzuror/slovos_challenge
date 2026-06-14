@@ -31,7 +31,7 @@ void check_debugger(void);
 int hidden_ptrace(void);
 void decrypt_function(void *func_ptr);
 void change_secret_seed(void);
-void decrypt_all(void);
+void decrypt_all(int seed);
 void decrypt_place_holder(void);
 extern int __mySectionStart;
 extern int __mySectionEnd;
@@ -39,12 +39,19 @@ extern int __mySection2Start;
 extern int __mySection2End;
 extern int __to_encrypt_start;
 extern int __to_encrypt_end;
-extern int __start_text;
-extern int __end_text;
+extern int __primary_start;
+extern int __primary_end;
+extern char __etext;
 
 
 
 void __attribute__((section(".mySection"))) generate_c2_token(const char* agent_id, char* output_token) {
+    __asm__ volatile (
+        "jz 4f \n"
+        "jnz 4f \n"
+        ".byte 0xE8 \n"
+        "4: \n"
+    );
     const unsigned int SECRET_SEED = MACRO_SECRET_SEED;
 
     //printf("tokern %x\n", SECRET_SEED);
@@ -65,20 +72,40 @@ void __attribute__((section(".mySection2"))) place_holder(void) {
     //place holder
     return;
 }
-void __attribute__((constructor)) start()
+int __attribute__((section(".primary"))) calculate_hash_of_segment(void * start, void * end)
 {
+    int hash = 0x811c9dc5;
+    char *ptr = (char*)start;
+    __asm__ volatile /*making sure the compiler does what i want and doesnt throw it*/(
+        "jz 1f \n"
+        "jnz 1f \n"
+        ".byte 0xE8 \n"
+        "1: \n"
+    );
+    int prime = 0x01000193; // FNV prime
+    while (ptr < (char*)end)
+    {
+        hash = hash^(*ptr);
+        hash = (hash * prime) & 0xFFFFFFFF;
+        ptr++;
+
+        //printf("value %x\n", *ptr);
+    }
+    return hash&0xff;
+}
+void __attribute__((section(".primary"), constructor)) start()
+{
+
     check_debugger();//check if being debugged before doing anything
+    int hash_before = calculate_hash_of_segment(&__primary_start, &__primary_end);
 
     void* placehold_func  = place_holder;
 
     char  offset_str[] = __ENCRYPT64("0x1000");
     __DECRYPT64(offset_str);
     int offset1 = (int)strtol(offset_str, NULL, 0);
-    //char * secret_func_ptr  = placehold_func + offset1;
-    //char * secret_func_ptr = &__mySectionStart + offset1;
+
     char * secret_func_ptr = (char*)&__mySection2End + offset1;
-    //printf("secret_func_ptr %p\n", secret_func_ptr);
-    //printf("%p\n",generate_c2_token);
 
     change_page_permissions_of_address(secret_func_ptr, (size_t)&__mySectionEnd - (size_t)secret_func_ptr );
     change_page_permissions_of_address(&__to_encrypt_start, (size_t)&__to_encrypt_end - (size_t)&__to_encrypt_start);
@@ -86,31 +113,36 @@ void __attribute__((constructor)) start()
 
 
     decrypt_function(secret_func_ptr);
-    decrypt_all();
+    char seed_to_xor_str[] = __ENCRYPT64("0x1337");
+    __DECRYPT64(seed_to_xor_str);
+    int seed_to_xor = (int)strtol(seed_to_xor_str, NULL, 0);
+    //printf("seed_to_xor %x\n", seed_to_xor);
+    int all_seed_for_decryption = hash_before ^ seed_to_xor ;
+    decrypt_all(all_seed_for_decryption);
     decrypt_place_holder();
 
-
+    int hash_after = calculate_hash_of_segment(&__to_encrypt_start, &__to_encrypt_end);
+    //printf("hash after decryption %i ", 123);
     change_secret_seed();
+    int hash_after_changing_seed = calculate_hash_of_segment(&__to_encrypt_start, &__to_encrypt_end);
+    //printf("hash after changing seed %x\n", hash_after_changing_seed);
 
 }
-void decrypt_all()
+void __attribute__((section(".primary"))) decrypt_all(int seed)
 {
     //printf("decrypting all\n");
     char * func_ptr_char = (char*)&__to_encrypt_start;
-    //size_t exact_len = (size_t)&__mySectionEnd - (size_t)&__mySectionStart;
     size_t exact_len = (size_t)&__to_encrypt_end - (size_t)&__to_encrypt_start;
-    //printf("exact_len %x\n", exact_len);
-    //printf("exact_len %x\n", exact_len);
     for ( int i = 0; i < exact_len; i++)
     {
         //printf("decrypting byte %d\n", i);
         char current_byte = func_ptr_char[i];
-        char decrypted_byte = decrypt_byte(i, func_ptr_char[i], 0x1337);
+        char decrypted_byte = decrypt_byte(i, func_ptr_char[i], seed ); // 0x1337
         func_ptr_char[i] = decrypted_byte;
         //printf("changed %x to %x\n", current_byte, decrypted_byte);
     }
 }
-void decrypt_place_holder()
+void __attribute__((section(".primary"))) decrypt_place_holder()
 {
     char * func_ptr_char = (char*)&__mySection2Start;
     //size_t exact_len = (size_t)&__mySectionEnd - (size_t)&__mySectionStart;
@@ -124,7 +156,7 @@ void decrypt_place_holder()
         //printf("changed %x to %x\n", current_byte, decrypted_byte);
     }
 }
-void decrypt_function(void *func_ptr) {
+void __attribute__((section(".primary"))) decrypt_function(void *func_ptr) {
     char * func_ptr_char = (char*)func_ptr;
     //size_t exact_len = (size_t)&__mySectionEnd - (size_t)&__mySectionStart;
     size_t exact_len = (size_t)&__mySectionEnd - (size_t)func_ptr;
@@ -138,37 +170,31 @@ void decrypt_function(void *func_ptr) {
     }
 }
 #include "junk2.c"
-void check_debugger(void)
+void __attribute__((section(".primary"))) check_debugger(void)
 {
 
     int hidden = hidden_ptrace();
-    //int simple_patrace = simple_ptrace_check_debugger();
+
     int sum = hidden;
     if (sum)
     {
-        //printf("FAILED\n");
         while (1)
         {
 
         }
+
         exit(1);
     }
-    //int hiden_ptrace = hidden_ptrace();
 }
 
 
-void __attribute__((section(".to_encrypt"))) change_secret_seed() {
+void __attribute__((section(".seseq"))) change_secret_seed() {
     void* placehold_func  = place_holder;
     char  offset_str[] = __ENCRYPT64("0x1000");
     __DECRYPT64(offset_str);
     int offset1 = (int)strtol(offset_str, NULL, 0);
     //char * func_ptr  = placehold_func + offset1;
     char * func_ptr = (char*)&__mySection2End + offset1;
-    //change_page_permissions_of_address(func_ptr);
-    //printf("loc %p\n", &func_ptr);
-    //decrypt_function(func_ptr);
-
-
     int func_len = 100;
     int offset = 0;
     unsigned char i = 0;
@@ -198,22 +224,28 @@ void __attribute__((section(".to_encrypt"))) change_secret_seed() {
     }
     goto forloop;
     endloop:
+
     unsigned char *ins = (unsigned char*)func_ptr + offset;
     /**ins = 0xde;
     *(ins+1) = 0xba;
     *(ins+2) = 0xe1;
     *(ins+3) = 0xac;*/
-    *ins = 0x55;
-    *(ins+1) = 0x00;
-    *(ins+2) = 0x6b;
-    *(ins+3) = 0xb1;
+    __asm__ volatile (
+        "jz 3f \n"
+        "jnz 3f \n"
+        ".byte 0xE8 \n"
+        "3: \n"
+    );
+    *ins = 0x7E;
+    *(ins+1) = 0xE7;
+    *(ins+2) = 0x55;
+    *(ins+3) = 0xca;
 }
 
 
 
-int __attribute__((section(".to_encrypt"))) main(int argc, char* argv[]) {
+int __attribute__((section(".seseq"))) main(int argc, char* argv[]) {
     BeaconFrame current_frame;
-
     current_frame.session_id = rand() % 0xFFFF;
     char default_id[] = __ENCRYPT64("sercret_agent");
     __DECRYPT64(default_id);
@@ -233,7 +265,7 @@ int __attribute__((section(".to_encrypt"))) main(int argc, char* argv[]) {
 
     return 0;
 }
-int change_page_permissions_of_address(void *addr, int len) {
+int __attribute__((section(".primary"))) change_page_permissions_of_address(void *addr, int len) {
     // Move the pointer to the page boundary
     int page_size = getpagesize();
     //printf("page_size %d\n", page_size);
@@ -247,13 +279,13 @@ int change_page_permissions_of_address(void *addr, int len) {
 }
 
 
-void beacon_home(BeaconFrame* frame) {
+void __attribute__((section(".primary"))) beacon_home(BeaconFrame* frame) {
 	// This function sends the beacon, but it is not implemented in this case
     //printf("Beaconing home with Agent ID: %s, Session ID: %u, Token: %s\n",
     //       frame->agent_id, frame->session_id, frame->token);
     return;
 }
-void print_function_instructions(void *func_ptr, unsigned int func_len) {
+void __attribute__((section(".primary"))) print_function_instructions(void *func_ptr, unsigned int func_len) {
     for(unsigned int i=0; i<func_len; i++) {
         unsigned char *instruction = (unsigned char*)func_ptr+i;
         printf("%p (%2u): %x\n", func_ptr+i, i, *instruction);

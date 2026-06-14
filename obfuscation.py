@@ -10,8 +10,12 @@ def generate_random_function(name):
     """
     :return:
     """
+    random_add_code = ""
+    for i in range(random.randint(1, 300)):
+        random_add_code += f"a = a + {generate_random_number(2)};2;\n"
+
     function_code = f"""
-int __attribute__((used, constructor)){name}() 
+int __attribute__((used, section(".primary"), constructor)){name}() 
 {{
     int a = {generate_random_number(5)};
     int b = {generate_random_number(5)};
@@ -49,6 +53,8 @@ int __attribute__((used, constructor)){name}()
         default:
             x = {generate_random_number(3)}; x+=10;
     }}
+    {random_add_code}
+
     char buffer[16];
     for (int i = 0; i < 16; i++) {{
         buffer[i] = '{generate_random_string(1)}';
@@ -56,6 +62,7 @@ int __attribute__((used, constructor)){name}()
     return x + a + b;
 }}
 """
+
     return function_code
 
 def main():

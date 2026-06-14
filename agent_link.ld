@@ -1,16 +1,16 @@
 SECTIONS
 {
-    .text : {
-        __start_text = .;
-        *(.text)
-        __end_text = .;
+    .primary : {
+        __primary_start = .;
+        *(.primary)
+        __primary_end = .;
     }
     .mySegment2  : {
             __mySection2Start = .;
             *(.mySection2)
             __mySection2End = .;
     }
-    . = . + 0x1000; /* Align to the next 4KB boundary */
+    . = . + 0x1000;
     .mySegment : {
         __mySectionStart = .;
         *(.mySection)
@@ -18,9 +18,9 @@ SECTIONS
 
     }
 
-    .to_encrypt : {
+    .seseq : {
         __to_encrypt_start = .;
-        *(.to_encrypt)
+        *(.seseq)
         __to_encrypt_end = .;
     }
 
